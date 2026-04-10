@@ -21,9 +21,9 @@ cd "$SCRIPT_DIR"
 # ── 2. Build the test image ───────────────────────────────────────────────────
 echo "==> Building test image: ${IMAGE_NAME}"
 docker build \
-    --file "${DOCKERFILE}" \
+    --file "${SCRIPT_DIR}/${DOCKERFILE}" \
     --tag  "${IMAGE_NAME}:latest" \
-    .
+    "${SCRIPT_DIR}"
 
 # ── 3. Determine test target / extra flags ───────────────────────────────────
 # If the caller passes arguments use them; otherwise test everything.
