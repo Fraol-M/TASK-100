@@ -20,10 +20,13 @@ cd "$SCRIPT_DIR"
 
 # ── 2. Build the test image ───────────────────────────────────────────────────
 echo "==> Building test image: ${IMAGE_NAME}"
-docker build \
-    --file "${SCRIPT_DIR}/${DOCKERFILE}" \
+# BuildKit in some environments strips directory prefixes from --file.
+# Workaround: cd into the directory that contains the Dockerfile and pass
+# just the filename; use the repo root as the build context via a relative path.
+(cd "${SCRIPT_DIR}/deploy" && docker build \
+    --file Dockerfile.test \
     --tag  "${IMAGE_NAME}:latest" \
-    "${SCRIPT_DIR}"
+    ..)
 
 # ── 3. Determine test target / extra flags ───────────────────────────────────
 # If the caller passes arguments use them; otherwise test everything.
