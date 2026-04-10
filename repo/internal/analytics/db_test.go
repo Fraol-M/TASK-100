@@ -324,6 +324,12 @@ func TestSavedReport_ServiceCRUD_DB(t *testing.T) {
 	if created.OwnerID != ownerID {
 		t.Errorf("OwnerID: want %d, got %d", ownerID, created.OwnerID)
 	}
+	if len(created.Filters) == 0 {
+		t.Fatal("expected non-empty default filters JSON")
+	}
+	if string(created.Filters) != "{}" {
+		t.Errorf("default filters JSON: want {}, got %s", string(created.Filters))
+	}
 
 	// Get — owner can retrieve
 	fetched, appErr := svc.GetSavedReport(created.ID, ownerID)

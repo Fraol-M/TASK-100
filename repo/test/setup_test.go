@@ -11,12 +11,15 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
+	"propertyops/backend/internal/attachments"
+	"propertyops/backend/internal/analytics"
 	authpkg "propertyops/backend/internal/auth"
 	"propertyops/backend/internal/audit"
 	"propertyops/backend/internal/governance"
 	"propertyops/backend/internal/notifications"
 	"propertyops/backend/internal/payments"
 	"propertyops/backend/internal/properties"
+	"propertyops/backend/internal/tenants"
 	userpkg "propertyops/backend/internal/users"
 	"propertyops/backend/internal/workorders"
 )
@@ -102,12 +105,15 @@ func truncateMySQLTables(t *testing.T, db *gorm.DB) {
 	// on the re-enable step.
 	tables := []string{
 		"audit_logs",
+		"generated_reports", "saved_reports",
+		"attachments",
 		"notification_receipts", "thread_messages", "thread_participants", "message_threads",
 		"notifications", "notification_templates",
 		"payment_approvals", "reconciliation_runs", "payments",
 		"enforcement_actions", "keywords_blacklist", "risk_rules", "reports",
 		"work_order_events", "cost_items", "work_orders",
 		"dispatch_cursors", "technician_skill_tags", "property_staff_assignments",
+		"tenant_profiles",
 		"units", "properties",
 		"user_roles", "sessions",
 		"users", "roles",
@@ -137,10 +143,17 @@ func allModels() []interface{} {
 		&properties.PropertyStaffAssignment{},
 		&properties.TechnicianSkillTag{},
 		&properties.DispatchCursor{},
+		// Tenants
+		&tenants.TenantProfile{},
 		// Work Orders
 		&workorders.WorkOrder{},
 		&workorders.WorkOrderEvent{},
 		&workorders.CostItem{},
+		// Attachments
+		&attachments.Attachment{},
+		// Analytics
+		&analytics.SavedReport{},
+		&analytics.GeneratedReport{},
 		// Payments
 		&payments.Payment{},
 		&payments.PaymentApproval{},

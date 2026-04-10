@@ -3,6 +3,7 @@ package integration_test
 import (
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -19,6 +20,7 @@ type matrixEnv struct {
 	cfg    *config.Config
 	router *gin.Engine
 	tokens map[string]string // role → bearer token
+	userIDs map[string]uint64
 }
 
 // setupMatrixEnv creates one DB + router and seeds one user per role.
@@ -34,6 +36,7 @@ func setupMatrixEnv(t *testing.T) *matrixEnv {
 		cfg:    cfg,
 		router: router,
 		tokens: make(map[string]string),
+		userIDs: make(map[string]uint64),
 	}
 
 	roles := []string{
@@ -46,8 +49,36 @@ func setupMatrixEnv(t *testing.T) *matrixEnv {
 
 	for _, role := range roles {
 		username := "matrix_" + role
-		_, pw := createTestUser(t, db, username, role)
+		u, pw := createTestUser(t, db, username, role)
 		env.tokens[role] = loginUser(t, router, username, pw)
+		env.userIDs[role] = u.ID
+	}
+
+	// Seed minimal property graph required by matrix setup calls:
+	// - Tenant work-order create enforces tenant profile -> unit -> property matching.
+	// - PM payment intent create enforces active PropertyManager assignment.
+	if err := db.Exec(`INSERT INTO properties (id, uuid, name, address_line1, city, state, zip_code, timezone, is_active, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+		1, newUUID(), "Matrix Property", "1 Matrix Way", "Austin", "TX", "78701", "America/New_York", true).Error; err != nil {
+		t.Fatalf("setupMatrixEnv: insert property: %v", err)
+	}
+
+	if err := db.Exec(`INSERT INTO units (id, uuid, property_id, unit_number, status, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, NOW(), NOW())`,
+		1, newUUID(), 1, "101", "Occupied").Error; err != nil {
+		t.Fatalf("setupMatrixEnv: insert unit: %v", err)
+	}
+
+	if err := db.Exec(`INSERT INTO tenant_profiles (uuid, user_id, unit_id, created_at, updated_at)
+		VALUES (?, ?, ?, NOW(), NOW())`,
+		newUUID(), env.userIDs[common.RoleTenant], 1).Error; err != nil {
+		t.Fatalf("setupMatrixEnv: insert tenant profile: %v", err)
+	}
+
+	if err := db.Exec(`INSERT INTO property_staff_assignments (property_id, user_id, role, is_active)
+		VALUES (?, ?, ?, ?)`,
+		1, env.userIDs[common.RolePropertyManager], common.RolePropertyManager, true).Error; err != nil {
+		t.Fatalf("setupMatrixEnv: insert PM assignment: %v", err)
 	}
 
 	return env
@@ -118,7 +149,7 @@ func TestAuthorizationMatrix(t *testing.T) {
 			method:        http.MethodGet,
 			path:          fmt.Sprintf("/api/v1/work-orders/%d", woID),
 			body:          nil,
-			allowedRoles:  []string{common.RoleTenant, common.RoleSystemAdmin},
+			allowedRoles:  []string{common.RoleTenant, common.RolePropertyManager, common.RoleSystemAdmin},
 			expectedWrong: http.StatusForbidden,
 		},
 
@@ -223,6 +254,13 @@ func TestAuthorizationMatrix(t *testing.T) {
 				if allowed[role] {
 					// Correct role: must receive a 2xx response.
 					if w.Code < 200 || w.Code >= 300 {
+						// Revoke is stateful in this matrix loop: the first allowed role
+						// revokes successfully, and subsequent allowed roles may receive 409.
+						if strings.HasPrefix(tc.path, "/api/v1/governance/enforcements/") &&
+							strings.HasSuffix(tc.path, "/revoke") &&
+							w.Code == http.StatusConflict {
+							continue
+						}
 						t.Errorf("role=%s: expected 2xx (allowed), got %d; body: %s", role, w.Code, w.Body.String())
 					}
 				} else {

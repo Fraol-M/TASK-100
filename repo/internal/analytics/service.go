@@ -105,13 +105,17 @@ func (s *Service) CreateSavedReport(req SavedReportRequest, ownerID uint64) (*Sa
 		format = "CSV"
 	}
 
-	var filtersJSON []byte
+	// saved_reports.filters is NOT NULL in MySQL, so persist an empty JSON object
+	// when callers omit filters.
+	filtersJSON := []byte("{}")
 	if req.Filters != nil {
 		b, err := json.Marshal(req.Filters)
 		if err != nil {
 			return nil, common.NewInternalError("failed to encode filters")
 		}
-		filtersJSON = b
+		if string(b) != "null" {
+			filtersJSON = b
+		}
 	}
 
 	report := &SavedReport{

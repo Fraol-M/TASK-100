@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# run_test.sh — build a CGO-enabled test image and run all Go tests inside Docker.
+# run_test.sh — build a CGO-enabled test image and run Go tests inside Docker.
 #
 # Usage:
-#   ./run_test.sh                  # run all tests
-#   ./run_test.sh ./internal/...   # run a specific package tree
+#   ./run_test.sh                  # run fundamental tests (fast path)
+#   ./run_test.sh --full           # run full suite (includes integration tests)
+#   ./run_test.sh ./internal/...   # run a specific package tree (custom mode)
 #   ./run_test.sh -run TestName    # pass any 'go test' flags/patterns
-#                                  # (defaults are fast local mode: -failfast, no -race)
+#                                  # (custom mode keeps previous behavior)
 #
 # Requirements: Docker (daemon must be running)
 # Exit code mirrors the test suite result (0 = pass, non-zero = failure).
@@ -30,11 +31,31 @@ echo "==> Building test image: ${IMAGE_NAME}"
     ..)
 
 # ── 3. Determine test target / extra flags ───────────────────────────────────
-# If the caller passes arguments use them; otherwise test everything.
+# Default mode is "fundamental" to keep local runs fast and stable.
+# Full integration suite remains available via --full.
+RUN_MODE="fundamental"
+if [[ "${1:-}" == "--full" ]]; then
+    RUN_MODE="full"
+    shift
+elif [[ "${1:-}" == "--fundamental" || "${1:-}" == "--core" ]]; then
+    RUN_MODE="fundamental"
+    shift
+fi
+
 if [[ $# -gt 0 ]]; then
+    # Custom mode: preserve caller-provided args exactly.
     TEST_ARGS=("$@")
-else
+    NEEDS_MYSQL=1
+    echo "==> Test mode: custom"
+elif [[ "$RUN_MODE" == "full" ]]; then
     TEST_ARGS=("-v" "-count=1" "-failfast" "-timeout=8m" "./...")
+    NEEDS_MYSQL=1
+    echo "==> Test mode: full"
+else
+    # Fundamental mode excludes ./test integration flows.
+    TEST_ARGS=("-v" "-count=1" "-failfast" "-timeout=8m" "./cmd/..." "./internal/...")
+    NEEDS_MYSQL=0
+    echo "==> Test mode: fundamental"
 fi
 
 # ── 4. Start a test database if integration tests need one ───────────────────
@@ -49,61 +70,75 @@ MYSQL_DATABASE="propertyops_test"
 MYSQL_PORT=3307   # use a non-standard port to avoid clashing with local MySQL
 
 cleanup() {
-    echo ""
-    echo "==> Cleaning up test containers"
-    docker rm -f  "${DB_CONTAINER}"   2>/dev/null || true
-    docker network rm "${NETWORK_NAME}" 2>/dev/null || true
+    if [[ "${NEEDS_MYSQL}" -eq 1 ]]; then
+        echo ""
+        echo "==> Cleaning up test containers"
+        docker rm -f  "${DB_CONTAINER}"   2>/dev/null || true
+        docker network rm "${NETWORK_NAME}" 2>/dev/null || true
+    fi
 }
 trap cleanup EXIT
 
-echo "==> Creating isolated Docker network: ${NETWORK_NAME}"
-docker network create "${NETWORK_NAME}" >/dev/null
+if [[ "${NEEDS_MYSQL}" -eq 1 ]]; then
+    echo "==> Creating isolated Docker network: ${NETWORK_NAME}"
+    docker network create "${NETWORK_NAME}" >/dev/null
 
-echo "==> Starting ephemeral MySQL container: ${DB_CONTAINER}"
-docker run -d \
-    --name "${DB_CONTAINER}" \
-    --network "${NETWORK_NAME}" \
-    -e MYSQL_ROOT_PASSWORD="${MYSQL_ROOT_PASSWORD}" \
-    -e MYSQL_DATABASE="${MYSQL_DATABASE}" \
-    -p "127.0.0.1:${MYSQL_PORT}:3306" \
-    --health-cmd="mysqladmin ping -uroot -p${MYSQL_ROOT_PASSWORD} --silent" \
-    --health-interval=2s \
-    --health-timeout=5s \
-    --health-retries=20 \
-    mysql:8.0.36 \
-    --default-authentication-plugin=mysql_native_password \
-    >/dev/null
+    echo "==> Starting ephemeral MySQL container: ${DB_CONTAINER}"
+    docker run -d \
+        --name "${DB_CONTAINER}" \
+        --network "${NETWORK_NAME}" \
+        -e MYSQL_ROOT_PASSWORD="${MYSQL_ROOT_PASSWORD}" \
+        -e MYSQL_DATABASE="${MYSQL_DATABASE}" \
+        -p "127.0.0.1:${MYSQL_PORT}:3306" \
+        --health-cmd="mysqladmin ping -uroot -p${MYSQL_ROOT_PASSWORD} --silent" \
+        --health-interval=2s \
+        --health-timeout=5s \
+        --health-retries=20 \
+        mysql:8.0.36 \
+        --default-authentication-plugin=mysql_native_password \
+        >/dev/null
 
-echo "==> Waiting for MySQL to be ready..."
-for i in $(seq 1 60); do
-    STATUS=$(docker inspect --format='{{.State.Health.Status}}' "${DB_CONTAINER}" 2>/dev/null || echo "starting")
-    if [[ "$STATUS" == "healthy" ]]; then
-        echo "    MySQL is ready (after ${i}s)"
-        break
-    fi
-    if [[ $i -eq 60 ]]; then
-        echo "ERROR: MySQL did not become healthy within 60 seconds." >&2
-        exit 1
-    fi
-    sleep 1
-done
+    echo "==> Waiting for MySQL to be ready..."
+    for i in $(seq 1 60); do
+        STATUS=$(docker inspect --format='{{.State.Health.Status}}' "${DB_CONTAINER}" 2>/dev/null || echo "starting")
+        if [[ "$STATUS" == "healthy" ]]; then
+            echo "    MySQL is ready (after ${i}s)"
+            break
+        fi
+        if [[ $i -eq 60 ]]; then
+            echo "ERROR: MySQL did not become healthy within 60 seconds." >&2
+            exit 1
+        fi
+        sleep 1
+    done
 
-# DSN passed to test/setup_test.go via TEST_MYSQL_DSN (the exact env var name
-# the test helper reads). Schema creation is handled inside each test via
-# GORM AutoMigrate — no separate migration binary run is needed.
-TEST_MYSQL_DSN="root:${MYSQL_ROOT_PASSWORD}@tcp(${DB_CONTAINER}:3306)/${MYSQL_DATABASE}?parseTime=true&multiStatements=true"
+    # DSN passed to test/setup_test.go via TEST_MYSQL_DSN (the exact env var name
+    # the test helper reads). Schema creation is handled inside each test via
+    # GORM AutoMigrate — no separate migration binary run is needed.
+    TEST_MYSQL_DSN="root:${MYSQL_ROOT_PASSWORD}@tcp(${DB_CONTAINER}:3306)/${MYSQL_DATABASE}?parseTime=true&multiStatements=true"
+fi
 
 # ── 5. Run the test suite ─────────────────────────────────────────────────────
 echo "==> Running tests: go test ${TEST_ARGS[*]}"
-docker run --rm \
-    --network "${NETWORK_NAME}" \
-    -e CGO_ENABLED=1 \
-    -e TEST_MYSQL_DSN="${TEST_MYSQL_DSN}" \
-    -e STORAGE_ROOT=/tmp/propertyops-test-storage \
-    -e ENCRYPTION_KEY_DIR=/tmp/propertyops-test-keys \
-    -e ENCRYPTION_ACTIVE_KEY_ID=1 \
-    "${IMAGE_NAME}:latest" \
-    go test "${TEST_ARGS[@]}"
+if [[ "${NEEDS_MYSQL}" -eq 1 ]]; then
+    docker run --rm \
+        --network "${NETWORK_NAME}" \
+        -e CGO_ENABLED=1 \
+        -e TEST_MYSQL_DSN="${TEST_MYSQL_DSN}" \
+        -e STORAGE_ROOT=/tmp/propertyops-test-storage \
+        -e ENCRYPTION_KEY_DIR=/tmp/propertyops-test-keys \
+        -e ENCRYPTION_ACTIVE_KEY_ID=1 \
+        "${IMAGE_NAME}:latest" \
+        go test "${TEST_ARGS[@]}"
+else
+    docker run --rm \
+        -e CGO_ENABLED=1 \
+        -e STORAGE_ROOT=/tmp/propertyops-test-storage \
+        -e ENCRYPTION_KEY_DIR=/tmp/propertyops-test-keys \
+        -e ENCRYPTION_ACTIVE_KEY_ID=1 \
+        "${IMAGE_NAME}:latest" \
+        go test "${TEST_ARGS[@]}"
+fi
 
 echo ""
 echo "==> All tests passed."

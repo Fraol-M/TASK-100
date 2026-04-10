@@ -1,0 +1,14 @@
+# Test image for running Go test suites inside Docker.
+# Includes CGO toolchain for sqlite-backed tests.
+FROM golang:1.25-alpine3.21
+
+RUN apk add --no-cache build-base ca-certificates git tzdata
+
+WORKDIR /src
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+
+ENV CGO_ENABLED=1

@@ -8,7 +8,25 @@ import (
 
 	"propertyops/backend/internal/common"
 	"propertyops/backend/internal/payments"
+	"gorm.io/gorm"
 )
+
+func seedPaymentProperty(t *testing.T, db *gorm.DB, propertyID uint64) {
+	t.Helper()
+	if err := db.Exec(`INSERT INTO properties (id, uuid, name, address_line1, city, state, zip_code, timezone, is_active, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+		propertyID, newUUID(), "Payments Test Property", "1 Billing St", "Austin", "TX", "78701", "America/New_York", true).Error; err != nil {
+		t.Fatalf("seedPaymentProperty: %v", err)
+	}
+}
+
+func assignPMToProperty(t *testing.T, db *gorm.DB, propertyID, userID uint64) {
+	t.Helper()
+	if err := db.Exec(`INSERT INTO property_staff_assignments (property_id, user_id, role, is_active)
+		VALUES (?, ?, ?, ?)`, propertyID, userID, common.RolePropertyManager, true).Error; err != nil {
+		t.Fatalf("assignPMToProperty: %v", err)
+	}
+}
 
 
 // TestPaymentIntent_CreatesWithExpiry verifies that a payment intent is created with
@@ -19,7 +37,9 @@ func TestPaymentIntent_CreatesWithExpiry(t *testing.T) {
 	cfg := testConfig()
 	router := newTestRouter(db, cfg)
 
-	_, managerPw := createTestUser(t, db, "pi_manager", common.RolePropertyManager)
+	managerUser, managerPw := createTestUser(t, db, "pi_manager", common.RolePropertyManager)
+	seedPaymentProperty(t, db, 1)
+	assignPMToProperty(t, db, 1, managerUser.ID)
 	managerToken := loginUser(t, router, "pi_manager", managerPw)
 
 	intentBody := map[string]interface{}{
@@ -65,7 +85,9 @@ func TestPaymentIntent_MarkPaid_ByManager(t *testing.T) {
 	cfg := testConfig()
 	router := newTestRouter(db, cfg)
 
-	_, managerPw := createTestUser(t, db, "mp_manager", common.RolePropertyManager)
+	managerUser, managerPw := createTestUser(t, db, "mp_manager", common.RolePropertyManager)
+	seedPaymentProperty(t, db, 1)
+	assignPMToProperty(t, db, 1, managerUser.ID)
 	managerToken := loginUser(t, router, "mp_manager", managerPw)
 
 	// Create intent.
@@ -108,8 +130,11 @@ func TestPaymentDualApproval_Above500(t *testing.T) {
 	cfg := testConfig()
 	router := newTestRouter(db, cfg)
 
-	_, manager1Pw := createTestUser(t, db, "da_manager1", common.RolePropertyManager)
-	_, manager2Pw := createTestUser(t, db, "da_manager2", common.RolePropertyManager)
+	manager1User, manager1Pw := createTestUser(t, db, "da_manager1", common.RolePropertyManager)
+	manager2User, manager2Pw := createTestUser(t, db, "da_manager2", common.RolePropertyManager)
+	seedPaymentProperty(t, db, 1)
+	assignPMToProperty(t, db, 1, manager1User.ID)
+	assignPMToProperty(t, db, 1, manager2User.ID)
 
 	m1Token := loginUser(t, router, "da_manager1", manager1Pw)
 	m2Token := loginUser(t, router, "da_manager2", manager2Pw)
@@ -168,7 +193,9 @@ func TestPaymentDualApproval_SameApproverBlocked(t *testing.T) {
 	cfg := testConfig()
 	router := newTestRouter(db, cfg)
 
-	_, managerPw := createTestUser(t, db, "sa_manager", common.RolePropertyManager)
+	managerUser, managerPw := createTestUser(t, db, "sa_manager", common.RolePropertyManager)
+	seedPaymentProperty(t, db, 1)
+	assignPMToProperty(t, db, 1, managerUser.ID)
 	managerToken := loginUser(t, router, "sa_manager", managerPw)
 
 	// Create intent for $1000.
@@ -207,7 +234,9 @@ func TestPaymentDualApproval_Below500_SingleApprover(t *testing.T) {
 	cfg := testConfig()
 	router := newTestRouter(db, cfg)
 
-	_, managerPw := createTestUser(t, db, "bl_manager", common.RolePropertyManager)
+	managerUser, managerPw := createTestUser(t, db, "bl_manager", common.RolePropertyManager)
+	seedPaymentProperty(t, db, 1)
+	assignPMToProperty(t, db, 1, managerUser.ID)
 	managerToken := loginUser(t, router, "bl_manager", managerPw)
 
 	// Create intent for $250 (below $500 threshold).
@@ -250,7 +279,9 @@ func TestPaymentReversal_RequiresReason(t *testing.T) {
 	cfg := testConfig()
 	router := newTestRouter(db, cfg)
 
-	_, managerPw := createTestUser(t, db, "rev_manager", common.RolePropertyManager)
+	managerUser, managerPw := createTestUser(t, db, "rev_manager", common.RolePropertyManager)
+	seedPaymentProperty(t, db, 1)
+	assignPMToProperty(t, db, 1, managerUser.ID)
 	managerToken := loginUser(t, router, "rev_manager", managerPw)
 
 	// Create and mark paid.
@@ -296,7 +327,9 @@ func TestPaymentExpiry(t *testing.T) {
 	cfg := testConfig()
 	router := newTestRouter(db, cfg)
 
-	_, managerPw := createTestUser(t, db, "exp_manager", common.RolePropertyManager)
+	managerUser, managerPw := createTestUser(t, db, "exp_manager", common.RolePropertyManager)
+	seedPaymentProperty(t, db, 1)
+	assignPMToProperty(t, db, 1, managerUser.ID)
 	managerToken := loginUser(t, router, "exp_manager", managerPw)
 
 	// Create intent.
@@ -465,7 +498,9 @@ func TestPaymentList(t *testing.T) {
 	cfg := testConfig()
 	router := newTestRouter(db, cfg)
 
-	_, managerPw := createTestUser(t, db, "pl_manager", common.RolePropertyManager)
+	managerUser, managerPw := createTestUser(t, db, "pl_manager", common.RolePropertyManager)
+	seedPaymentProperty(t, db, 1)
+	assignPMToProperty(t, db, 1, managerUser.ID)
 	managerToken := loginUser(t, router, "pl_manager", managerPw)
 
 	// Create two intents.

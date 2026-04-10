@@ -4,6 +4,7 @@
 tmp/
 *.exe
 *.test
+!deploy/Dockerfile.test
 *.out
 *.log
 coverage.html

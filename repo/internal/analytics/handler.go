@@ -164,7 +164,7 @@ func (h *Handler) DeleteSavedReport(c *gin.Context) {
 		return
 	}
 
-	common.NoContent(c)
+	common.Success(c, gin.H{})
 }
 
 // GenerateReport handles POST /analytics/reports/generate/:id
