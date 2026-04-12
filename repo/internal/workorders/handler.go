@@ -77,6 +77,14 @@ func (h *Handler) Create(c *gin.Context) {
 		}
 	}
 
+	// Preflight: reject before creating the work order row so we never need to roll back
+	// solely because the client sent too many files.
+	if len(files) > 6 {
+		common.RespondError(c, common.NewValidationError("Validation failed",
+			common.FieldError{Field: "attachments", Message: "maximum 6 attachments allowed"}))
+		return
+	}
+
 	wo, appErr := h.service.Create(req, userID, ip, reqID)
 	if appErr != nil {
 		common.RespondError(c, appErr)

@@ -6,6 +6,11 @@ import (
 )
 
 // CreateWorkOrderRequest is the payload for creating a new work order.
+//
+// Submission formats:
+//   - application/json — all fields encoded as a standard JSON body; no inline attachments.
+//   - multipart/form-data — JSON fields encoded in a "data" form field; optional files in
+//     "attachments[]" fields (up to 6 JPEG/PNG files, each ≤ 5 MB).
 type CreateWorkOrderRequest struct {
 	PropertyID               uint64          `json:"property_id" binding:"required"`
 	UnitID                   *uint64         `json:"unit_id,omitempty"`
