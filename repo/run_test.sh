@@ -2,14 +2,17 @@
 # run_test.sh — build a CGO-enabled test image and run Go tests inside Docker.
 #
 # Usage:
-#   ./run_test.sh                  # run the FULL suite (./...) — includes integration tests
-#   ./run_test.sh --fast           # run fundamental tests only (./cmd/... ./internal/...)
-#   ./run_test.sh --fundamental    # alias for --fast
-#   ./run_test.sh --core           # alias for --fast
-#   ./run_test.sh --full           # explicit full mode (alias of default)
-#   ./run_test.sh ./internal/...   # run a specific package tree (custom mode)
-#   ./run_test.sh -run TestName    # pass any 'go test' flags/patterns
-#                                  # (custom mode keeps previous behavior)
+#   ./run_test.sh                     # run the FULL suite (./...) — includes integration tests
+#   ./run_test.sh --fast              # run fundamental tests only (./cmd/... ./internal/...)
+#   ./run_test.sh --fundamental       # alias for --fast
+#   ./run_test.sh --core              # alias for --fast
+#   ./run_test.sh --full              # explicit full mode (alias of default)
+#   ./run_test.sh --coverage          # add coverage instrumentation + print a
+#                                     # per-package breakdown and total % after
+#                                     # the run. Combines with --full/--fast.
+#   ./run_test.sh ./internal/...      # run a specific package tree (custom mode)
+#   ./run_test.sh -run TestName       # pass any 'go test' flags/patterns
+#                                     # (custom mode keeps previous behavior)
 #
 # Requirements: Docker (daemon must be running)
 # Exit code mirrors the test suite result (0 = pass, non-zero = failure).
@@ -37,14 +40,21 @@ echo "==> Building test image: ${IMAGE_NAME}"
 # Default mode is "full" so the bare `./run_test.sh` invocation runs every
 # package, including the integration suite under ./test/...
 # Use --fast / --fundamental / --core to opt out of the integration flows.
+# --coverage instruments the run and prints a summary after tests complete.
 RUN_MODE="full"
-if [[ "${1:-}" == "--full" ]]; then
-    RUN_MODE="full"
-    shift
-elif [[ "${1:-}" == "--fast" || "${1:-}" == "--fundamental" || "${1:-}" == "--core" ]]; then
-    RUN_MODE="fundamental"
-    shift
-fi
+COLLECT_COVERAGE=0
+while [[ $# -gt 0 ]]; do
+    case "${1}" in
+        --full)
+            RUN_MODE="full"; shift ;;
+        --fast|--fundamental|--core)
+            RUN_MODE="fundamental"; shift ;;
+        --coverage|--cover)
+            COLLECT_COVERAGE=1; shift ;;
+        *)
+            break ;;
+    esac
+done
 
 if [[ $# -gt 0 ]]; then
     # Custom mode: preserve caller-provided args exactly.
@@ -60,6 +70,17 @@ else
     TEST_ARGS=("-v" "-count=1" "-failfast" "-timeout=8m" "./cmd/..." "./internal/...")
     NEEDS_MYSQL=0
     echo "==> Test mode: fundamental"
+fi
+
+# Coverage flags are injected here so they apply to any mode (full/fast/custom).
+# -coverpkg=./internal/... ensures integration tests in ./test/... attribute
+# their coverage to the internal packages they exercise (handlers, services,
+# repositories), not to the test package itself.
+COVERAGE_FILE="/tmp/propertyops-cov.out"
+if [[ "${COLLECT_COVERAGE}" -eq 1 ]]; then
+    TEST_ARGS+=("-coverpkg=./internal/...")
+    TEST_ARGS+=("-coverprofile=${COVERAGE_FILE}")
+    echo "==> Coverage: ENABLED (profile will be written to ${COVERAGE_FILE} inside container)"
 fi
 
 # ── 4. Start a test database if integration tests need one ───────────────────
@@ -126,7 +147,27 @@ fi
 # Filter out "[no test files]" lines for packages with no tests (cmd/api, etc.)
 # so the output focuses on packages that actually ran something. awk always
 # exits 0, so pipefail still reports a real go-test failure.
+#
+# When --coverage is set, run the tests AND go-tool-cover summary in a single
+# container invocation so the profile (written inside the container) is still
+# available when we format the summary.
 echo "==> Running tests: go test ${TEST_ARGS[*]}"
+build_container_cmd() {
+    # Reassemble a shell-safe command string from TEST_ARGS so we can chain
+    # commands inside sh -c when coverage is enabled.
+    local quoted
+    quoted="$(printf '%q ' "${TEST_ARGS[@]}")"
+    if [[ "${COLLECT_COVERAGE}" -eq 1 ]]; then
+        # Run tests; if they pass, print per-function + total coverage.
+        # `tail -n 1` on the -func output yields the "total:" line.
+        printf 'go test %s; rc=$?; if [ -f %q ]; then echo ""; echo "==> Coverage (per package, top 20):"; go tool cover -func=%q | grep -E "^\S" | tail -n 20; echo ""; echo -n "==> Total coverage: "; go tool cover -func=%q | tail -n 1; fi; exit $rc' \
+            "$quoted" "$COVERAGE_FILE" "$COVERAGE_FILE" "$COVERAGE_FILE"
+    else
+        printf 'go test %s' "$quoted"
+    fi
+}
+CONTAINER_CMD="$(build_container_cmd)"
+
 if [[ "${NEEDS_MYSQL}" -eq 1 ]]; then
     docker run --rm \
         --network "${NETWORK_NAME}" \
@@ -136,7 +177,7 @@ if [[ "${NEEDS_MYSQL}" -eq 1 ]]; then
         -e ENCRYPTION_KEY_DIR=/tmp/propertyops-test-keys \
         -e ENCRYPTION_ACTIVE_KEY_ID=1 \
         "${IMAGE_NAME}:latest" \
-        go test "${TEST_ARGS[@]}" | awk '!/\[no test files\]/'
+        sh -c "${CONTAINER_CMD}" | awk '!/\[no test files\]/'
 else
     docker run --rm \
         -e CGO_ENABLED=1 \
@@ -144,7 +185,7 @@ else
         -e ENCRYPTION_KEY_DIR=/tmp/propertyops-test-keys \
         -e ENCRYPTION_ACTIVE_KEY_ID=1 \
         "${IMAGE_NAME}:latest" \
-        go test "${TEST_ARGS[@]}" | awk '!/\[no test files\]/'
+        sh -c "${CONTAINER_CMD}" | awk '!/\[no test files\]/'
 fi
 
 echo ""
