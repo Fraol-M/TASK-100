@@ -4,17 +4,22 @@ import (
 	"fmt"
 	"net/http"
 	"testing"
+	"time"
 
 	"propertyops/backend/internal/common"
 	"propertyops/backend/internal/payments"
 )
 
-// seedPayment inserts a PAID payment-intent row directly via GORM. This status
-// is what CreateSettlement requires on the linked payment ("settlement can only
-// be created for paid payments"), and CreateMakeup accepts any status below the
-// dual-approval threshold, so both endpoints can target this seed safely.
+// seedPayment inserts a PAID payment-intent row. CreateSettlement enforces
+// `status == "Paid"` on the linked payment, and CreateMakeup tolerates any
+// status below the dual-approval threshold, so both endpoints can target this
+// seed safely. We issue the INSERT followed by an explicit UPDATE on `status`
+// and `paid_at` to guarantee those columns land as intended, independent of
+// any GORM default-tag interaction with the `status VARCHAR(20) NOT NULL
+// DEFAULT 'Pending'` column.
 func seedPayment(t *testing.T, env *plainEnv, propertyID uint64, amount float64) *payments.Payment {
 	t.Helper()
+
 	p := payments.Payment{
 		UUID:       newUUID(),
 		PropertyID: propertyID,
@@ -24,9 +29,30 @@ func seedPayment(t *testing.T, env *plainEnv, propertyID uint64, amount float64)
 		Status:     common.PaymentStatusPaid,
 	}
 	if err := env.db.Create(&p).Error; err != nil {
-		t.Fatalf("seedPayment: %v", err)
+		t.Fatalf("seedPayment: create: %v", err)
 	}
-	return &p
+
+	// Force status explicitly — some GORM/driver combinations end up applying
+	// the column DEFAULT ('Pending') on INSERT. Updating after Create is
+	// unambiguous SQL and guarantees the row observed by later GetPayment calls.
+	now := time.Now().UTC()
+	if err := env.db.Exec(
+		"UPDATE payments SET status = ?, paid_at = ? WHERE id = ?",
+		common.PaymentStatusPaid, now, p.ID,
+	).Error; err != nil {
+		t.Fatalf("seedPayment: force status: %v", err)
+	}
+
+	// Reload so the caller sees the current DB state (Status = "Paid", PaidAt set).
+	var reloaded payments.Payment
+	if err := env.db.First(&reloaded, p.ID).Error; err != nil {
+		t.Fatalf("seedPayment: reload: %v", err)
+	}
+	if reloaded.Status != common.PaymentStatusPaid {
+		t.Fatalf("seedPayment: expected status=%q after force-update, got %q",
+			common.PaymentStatusPaid, reloaded.Status)
+	}
+	return &reloaded
 }
 
 // TestPayment_CreateMakeup_ByPM verifies that a PropertyManager managing the
