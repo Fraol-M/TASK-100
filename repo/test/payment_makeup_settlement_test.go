@@ -9,18 +9,19 @@ import (
 	"propertyops/backend/internal/payments"
 )
 
-// seedPayment inserts a Settled payment row directly via GORM. It is used to
-// give the makeup/settlement endpoints an existing payment to reference so
-// these tests exercise the endpoint logic without depending on the create flow.
+// seedPayment inserts a PAID payment-intent row directly via GORM. This status
+// is what CreateSettlement requires on the linked payment ("settlement can only
+// be created for paid payments"), and CreateMakeup accepts any status below the
+// dual-approval threshold, so both endpoints can target this seed safely.
 func seedPayment(t *testing.T, env *plainEnv, propertyID uint64, amount float64) *payments.Payment {
 	t.Helper()
 	p := payments.Payment{
 		UUID:       newUUID(),
 		PropertyID: propertyID,
-		Kind:       common.PaymentKindSettlementPosting,
+		Kind:       common.PaymentKindIntent,
 		Amount:     amount,
 		Currency:   "USD",
-		Status:     common.PaymentStatusSettled,
+		Status:     common.PaymentStatusPaid,
 	}
 	if err := env.db.Create(&p).Error; err != nil {
 		t.Fatalf("seedPayment: %v", err)
