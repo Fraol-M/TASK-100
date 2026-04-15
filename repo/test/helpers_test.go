@@ -92,6 +92,9 @@ func makeRequest(t *testing.T, router *gin.Engine, method, path, token string, b
 	if err != nil {
 		t.Fatalf("makeRequest: new request: %v", err)
 	}
+	// Populate RemoteAddr so Gin's c.ClientIP() returns a valid IP. Required by
+	// CIDR-gated middleware (e.g. AnomalyAllowlist) which rejects when IP is empty.
+	req.RemoteAddr = testRemoteAddr
 
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
@@ -104,6 +107,11 @@ func makeRequest(t *testing.T, router *gin.Engine, method, path, token string, b
 	router.ServeHTTP(w, req)
 	return w
 }
+
+// testRemoteAddr is the RemoteAddr set on every test request. 127.0.0.1 is
+// inside the test AnomalyAllowlist CIDRs (127.0.0.0/8), so CIDR-gated endpoints
+// see a valid loopback client.
+const testRemoteAddr = "127.0.0.1:12345"
 
 // makeRawRequest performs an HTTP request with a pre-encoded JSON string body.
 func makeRawRequest(t *testing.T, router *gin.Engine, method, path, token, rawBody string) *httptest.ResponseRecorder {
@@ -120,6 +128,7 @@ func makeRawRequest(t *testing.T, router *gin.Engine, method, path, token, rawBo
 	if err != nil {
 		t.Fatalf("makeRawRequest: %v", err)
 	}
+	req.RemoteAddr = testRemoteAddr
 	if rawBody != "" {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -259,6 +268,7 @@ func postMultipart(t *testing.T, router *gin.Engine, method, path, token string,
 	if err != nil {
 		t.Fatalf("postMultipart: NewRequest: %v", err)
 	}
+	req.RemoteAddr = testRemoteAddr
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)

@@ -47,6 +47,7 @@ func postAttachment(t *testing.T, router *gin.Engine, woID uint64, token string)
 	if err != nil {
 		t.Fatalf("postAttachment: %v", err)
 	}
+	req.RemoteAddr = testRemoteAddr
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
@@ -258,6 +259,7 @@ func TestWorkOrder_CreateWithInlineAttachment(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRequest: %v", err)
 	}
+	req.RemoteAddr = testRemoteAddr
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 	req.Header.Set("Authorization", "Bearer "+tenantToken)
 
@@ -317,6 +319,7 @@ func TestWorkOrder_CreateTooManyInlineAttachments(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRequest: %v", err)
 	}
+	req.RemoteAddr = testRemoteAddr
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 	req.Header.Set("Authorization", "Bearer "+tenantToken)
 
