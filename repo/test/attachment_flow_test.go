@@ -128,7 +128,7 @@ func TestAttachment_UploadListDownloadDelete(t *testing.T) {
 
 	// --- Download ---
 	w = makeRequest(t, router, http.MethodGet,
-		fmt.Sprintf("/api/v1/attachments/%d", attachID), tenantToken, nil)
+		fmt.Sprintf("/api/v1/work-orders/attachments/%d", attachID), tenantToken, nil)
 	assertStatus(t, w, http.StatusOK)
 	if ct := w.Header().Get("Content-Type"); ct != "image/jpeg" {
 		t.Errorf("download Content-Type: expected image/jpeg, got %q", ct)
@@ -139,7 +139,7 @@ func TestAttachment_UploadListDownloadDelete(t *testing.T) {
 
 	// --- Delete ---
 	w = makeRequest(t, router, http.MethodDelete,
-		fmt.Sprintf("/api/v1/attachments/%d", attachID), tenantToken, nil)
+		fmt.Sprintf("/api/v1/work-orders/attachments/%d", attachID), tenantToken, nil)
 	assertStatus(t, w, http.StatusNoContent)
 
 	// Confirm deletion: list should now be empty.
@@ -189,11 +189,11 @@ func TestAttachment_CrossUserForbidden(t *testing.T) {
 	assertStatus(t, w, http.StatusForbidden)
 
 	w = makeRequest(t, router, http.MethodGet,
-		fmt.Sprintf("/api/v1/attachments/%d", attachID), otherToken, nil)
+		fmt.Sprintf("/api/v1/work-orders/attachments/%d", attachID), otherToken, nil)
 	assertStatus(t, w, http.StatusForbidden)
 
 	w = makeRequest(t, router, http.MethodDelete,
-		fmt.Sprintf("/api/v1/attachments/%d", attachID), otherToken, nil)
+		fmt.Sprintf("/api/v1/work-orders/attachments/%d", attachID), otherToken, nil)
 	assertStatus(t, w, http.StatusForbidden)
 }
 
@@ -207,8 +207,8 @@ func TestAttachment_UnauthenticatedForbidden(t *testing.T) {
 	endpoints := []struct{ method, path string }{
 		{http.MethodPost, "/api/v1/work-orders/1/attachments"},
 		{http.MethodGet, "/api/v1/work-orders/1/attachments"},
-		{http.MethodGet, "/api/v1/attachments/1"},
-		{http.MethodDelete, "/api/v1/attachments/1"},
+		{http.MethodGet, "/api/v1/work-orders/attachments/1"},
+		{http.MethodDelete, "/api/v1/work-orders/attachments/1"},
 	}
 	for _, ep := range endpoints {
 		w := makeRequest(t, router, ep.method, ep.path, "", nil)

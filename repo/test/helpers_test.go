@@ -3,8 +3,11 @@ package integration_test
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/textproto"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +16,8 @@ import (
 	"gorm.io/gorm"
 
 	"propertyops/backend/internal/app"
+	authpkg "propertyops/backend/internal/auth"
+	"propertyops/backend/internal/common"
 	"propertyops/backend/internal/config"
 )
 
@@ -170,4 +175,96 @@ func assertStatus(t *testing.T, w *httptest.ResponseRecorder, expected int) {
 	if w.Code != expected {
 		t.Errorf("expected HTTP %d, got %d; body: %s", expected, w.Code, w.Body.String())
 	}
+}
+
+// plainEnv bundles DB + cfg + router for tests that don't need anything fancier
+// than the standard test setup. Returned by newPlainEnv.
+type plainEnv struct {
+	db     *gorm.DB
+	cfg    *config.Config
+	router *gin.Engine
+}
+
+// newPlainEnv builds a fresh test DB, seeds the standard roles, builds a router,
+// and returns the bundle. Use this in tests that need the router + db + cfg
+// without any extra setup.
+func newPlainEnv(t *testing.T) *plainEnv {
+	t.Helper()
+	db := setupTestDB(t)
+	seedRoles(t, db)
+	cfg := testConfig()
+	router := newTestRouter(db, cfg)
+	return &plainEnv{db: db, cfg: cfg, router: router}
+}
+
+// createUserAndLogin is a thin convenience wrapper: create a user with the given
+// role, then log in and return the bearer token alongside the auth.User struct.
+func createUserAndLogin(t *testing.T, db *gorm.DB, router *gin.Engine, username, role string) (*authpkg.User, string) {
+	t.Helper()
+	user, pw := createTestUser(t, db, username, role)
+	token := loginUser(t, router, username, pw)
+	return user, token
+}
+
+// createSystemAdminUser creates a SystemAdmin user, logs in, and returns
+// the user ID + bearer token. Most admin-suite tests need exactly this combo.
+func createSystemAdminUser(t *testing.T, db *gorm.DB, router *gin.Engine, username string) (uint64, string) {
+	t.Helper()
+	user, token := createUserAndLogin(t, db, router, username, common.RoleSystemAdmin)
+	return user.ID, token
+}
+
+// multipartFile describes one file part for postMultipart.
+type multipartFile struct {
+	FieldName string // form field name (e.g. "file" or "attachments[]")
+	Filename  string // original filename (e.g. "photo.jpg")
+	MimeType  string // Content-Type header for the part (e.g. "image/jpeg")
+	Content   []byte // raw bytes
+}
+
+// postMultipart issues a multipart/form-data request with the given text fields
+// and file parts. method is typically POST or PUT. token may be empty to omit auth.
+func postMultipart(t *testing.T, router *gin.Engine, method, path, token string,
+	textFields map[string]string, files []multipartFile) *httptest.ResponseRecorder {
+	t.Helper()
+
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+
+	for k, v := range textFields {
+		if err := mw.WriteField(k, v); err != nil {
+			t.Fatalf("postMultipart: WriteField(%q): %v", k, err)
+		}
+	}
+
+	for _, f := range files {
+		hdr := make(textproto.MIMEHeader)
+		hdr.Set("Content-Disposition", fmt.Sprintf(`form-data; name=%q; filename=%q`, f.FieldName, f.Filename))
+		if f.MimeType != "" {
+			hdr.Set("Content-Type", f.MimeType)
+		}
+		part, err := mw.CreatePart(hdr)
+		if err != nil {
+			t.Fatalf("postMultipart: CreatePart: %v", err)
+		}
+		if _, err := part.Write(f.Content); err != nil {
+			t.Fatalf("postMultipart: Write: %v", err)
+		}
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatalf("postMultipart: Close: %v", err)
+	}
+
+	req, err := http.NewRequest(method, path, &buf)
+	if err != nil {
+		t.Fatalf("postMultipart: NewRequest: %v", err)
+	}
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	return w
 }

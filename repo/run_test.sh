@@ -2,8 +2,11 @@
 # run_test.sh — build a CGO-enabled test image and run Go tests inside Docker.
 #
 # Usage:
-#   ./run_test.sh                  # run fundamental tests (fast path)
-#   ./run_test.sh --full           # run full suite (includes integration tests)
+#   ./run_test.sh                  # run the FULL suite (./...) — includes integration tests
+#   ./run_test.sh --fast           # run fundamental tests only (./cmd/... ./internal/...)
+#   ./run_test.sh --fundamental    # alias for --fast
+#   ./run_test.sh --core           # alias for --fast
+#   ./run_test.sh --full           # explicit full mode (alias of default)
 #   ./run_test.sh ./internal/...   # run a specific package tree (custom mode)
 #   ./run_test.sh -run TestName    # pass any 'go test' flags/patterns
 #                                  # (custom mode keeps previous behavior)
@@ -31,13 +34,14 @@ echo "==> Building test image: ${IMAGE_NAME}"
     ..)
 
 # ── 3. Determine test target / extra flags ───────────────────────────────────
-# Default mode is "fundamental" to keep local runs fast and stable.
-# Full integration suite remains available via --full.
-RUN_MODE="fundamental"
+# Default mode is "full" so the bare `./run_test.sh` invocation runs every
+# package, including the integration suite under ./test/...
+# Use --fast / --fundamental / --core to opt out of the integration flows.
+RUN_MODE="full"
 if [[ "${1:-}" == "--full" ]]; then
     RUN_MODE="full"
     shift
-elif [[ "${1:-}" == "--fundamental" || "${1:-}" == "--core" ]]; then
+elif [[ "${1:-}" == "--fast" || "${1:-}" == "--fundamental" || "${1:-}" == "--core" ]]; then
     RUN_MODE="fundamental"
     shift
 fi
