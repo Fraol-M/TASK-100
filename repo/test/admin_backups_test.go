@@ -22,9 +22,10 @@ func TestAdmin_BackupsList(t *testing.T) {
 		Data []map[string]interface{} `json:"data"`
 	}
 	parseResponse(t, w, &resp)
-	// Empty slice expected on a fresh backup root — assert it's a slice (possibly empty).
-	if resp.Data == nil {
-		t.Errorf("expected backups data to be an array (possibly empty), got nil; body: %s", w.Body.String())
+	// A fresh backup root has no files, so the handler returns data: null (a
+	// nil slice), which unmarshals as len 0. Assert the count, not the raw value.
+	if len(resp.Data) != 0 {
+		t.Errorf("expected 0 backups on fresh backup root, got %d; body: %s", len(resp.Data), w.Body.String())
 	}
 }
 

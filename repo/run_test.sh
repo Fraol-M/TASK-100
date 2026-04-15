@@ -123,6 +123,9 @@ if [[ "${NEEDS_MYSQL}" -eq 1 ]]; then
 fi
 
 # ── 5. Run the test suite ─────────────────────────────────────────────────────
+# Filter out "[no test files]" lines for packages with no tests (cmd/api, etc.)
+# so the output focuses on packages that actually ran something. awk always
+# exits 0, so pipefail still reports a real go-test failure.
 echo "==> Running tests: go test ${TEST_ARGS[*]}"
 if [[ "${NEEDS_MYSQL}" -eq 1 ]]; then
     docker run --rm \
@@ -133,7 +136,7 @@ if [[ "${NEEDS_MYSQL}" -eq 1 ]]; then
         -e ENCRYPTION_KEY_DIR=/tmp/propertyops-test-keys \
         -e ENCRYPTION_ACTIVE_KEY_ID=1 \
         "${IMAGE_NAME}:latest" \
-        go test "${TEST_ARGS[@]}"
+        go test "${TEST_ARGS[@]}" | awk '!/\[no test files\]/'
 else
     docker run --rm \
         -e CGO_ENABLED=1 \
@@ -141,7 +144,7 @@ else
         -e ENCRYPTION_KEY_DIR=/tmp/propertyops-test-keys \
         -e ENCRYPTION_ACTIVE_KEY_ID=1 \
         "${IMAGE_NAME}:latest" \
-        go test "${TEST_ARGS[@]}"
+        go test "${TEST_ARGS[@]}" | awk '!/\[no test files\]/'
 fi
 
 echo ""
