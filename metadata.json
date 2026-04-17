@@ -5,5 +5,5 @@
   "backend_language": "Go",
   "frontend_framework": "",
   "backend_framework": "Gin",
-  "database": "MySQL",
+  "database": "MySQL"
 }
